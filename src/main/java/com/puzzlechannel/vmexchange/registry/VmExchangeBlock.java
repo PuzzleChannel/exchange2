@@ -4,6 +4,7 @@ import com.puzzlechannel.vmexchange.data.VmExchangeManager;
 import com.puzzlechannel.vmexchange.menu.VmExchangeMenu;
 import com.puzzlechannel.vmexchange.network.VmExchangeNetworking;
 import net.minecraft.core.BlockPos;
+import net.minecraft.ChatFormatting;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
@@ -32,7 +33,7 @@ public final class VmExchangeBlock extends Block {
 
         if (!manager.hasExchangeAccess(serverPlayer, level.dimension(), pos)) {
             serverPlayer.sendSystemMessage(Component.literal(
-                    "Доступ запрещён. Этот Обменник предназначен для группы LuckPerms: " + requiredGroup));
+                    "Этот Обменник не вашей Страны").withStyle(ChatFormatting.RED));
             return InteractionResult.SUCCESS;
         }
 
