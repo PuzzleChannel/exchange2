@@ -6,6 +6,7 @@ import com.puzzlechannel.vmexchange.network.VmExchangeNetworking;
 import com.puzzlechannel.vmexchange.registry.ModBlocks;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -36,6 +37,8 @@ public final class VmExchangeManager {
     public VmExchangeData data() { return data; }
 
     public void ensureCurrentWeek(MinecraftServer ignored) {
+        cleanupStaleBindings();
+
         String key = weekKey(ZonedDateTime.now());
         boolean resetOccurred = false;
         if (!key.equals(data.weekKey())) {
@@ -51,16 +54,48 @@ public final class VmExchangeManager {
             resetOccurred = true;
         }
 
-        // Migrate old saved selections so the new slot-role rules are enforced
-        // without wiping the player's weekly progress.
         if (!matchesSlotRoles(data.materials(), cfg)) {
             List<String> migrated = migrateExistingMaterials(data.materials(), cfg);
             if (migrated.size() == 4) { data.setMaterials(migrated); resetOccurred = true; }
         }
 
-        // Refresh still-open screens after a reset and close any whose exchange is
-        // no longer a valid block or whose owner group access has changed.
+        // Refresh still-open screens after a reset and close menus whose exchange
+        // is no longer valid or whose group access has changed.
         if (resetOccurred) refreshOpenMenus();
+    }
+
+    /**
+     * A block-removal hook was removed from Block in the 26.2 mappings.
+     * Purge persisted bindings by checking loaded dimension chunks periodically.
+     * Unloaded chunks are deliberately skipped to avoid loading them just for cleanup.
+     */
+    private void cleanupStaleBindings() {
+        for (String key : data.exchangeGroups().keySet()) {
+            int separator = key.indexOf('@');
+            if (separator <= 0) continue;
+
+            String dimensionId = key.substring(0, separator);
+            String[] coordinates = key.substring(separator + 1).split(",", -1);
+            if (coordinates.length != 3) continue;
+
+            final BlockPos pos;
+            try {
+                pos = new BlockPos(
+                        Integer.parseInt(coordinates[0]),
+                        Integer.parseInt(coordinates[1]),
+                        Integer.parseInt(coordinates[2]));
+            } catch (NumberFormatException ignored) {
+                continue;
+            }
+
+            for (ServerLevel level : server.getAllLevels()) {
+                if (!level.dimension().identifier().toString().equals(dimensionId)) continue;
+                if (level.hasChunkAt(pos) && !level.getBlockState(pos).is(ModBlocks.EXCHANGE)) {
+                    data.removeExchangeGroupByKey(key);
+                }
+                break;
+            }
+        }
     }
 
     private boolean matchesSlotRoles(List<String> ids, VmExchangeConfig cfg) {
@@ -125,7 +160,6 @@ public final class VmExchangeManager {
         if (raw.size() != 4) return raw.stream().limit(4).toList();
 
         VmExchangeConfig cfg = VmExchangeConfig.get();
-        // Slots 1-3 use the standard pool; slot 4 uses the special pool.
         for (int i = 0; i < 3; i++) {
             if (!cfg.standardMaterialIds.contains(raw.get(i))) return List.of();
         }
@@ -172,7 +206,6 @@ public final class VmExchangeManager {
     public int currentPrice(ServerPlayer player) { return VmExchangeConfig.get().priceFor(state(player).weeklyEarned()); }
     public List<String> materials() { return data.materials(); }
 
-    /** Returns the group bound to this exact block, dimension included. */
     public String exchangeGroup(ResourceKey<Level> dimension, BlockPos pos) {
         if (dimension == null || pos == null) return null;
         return data.exchangeGroup(dimension, pos);
@@ -236,7 +269,6 @@ public final class VmExchangeManager {
         if (coin == null) return reject(player, "vmexchange.no_vmcoin");
         if (!canFitCoins(player, coin, 1)) return reject(player, "vmexchange.no_space");
 
-        // Exactly one coin per click; all four designated inputs must meet the current price.
         int price = Math.max(1, cfg.priceFor(ps.weeklyEarned()));
         String[] actual = new String[4];
         int[] counts = new int[4];
