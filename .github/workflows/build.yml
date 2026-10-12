@@ -1,0 +1,33 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+      - 'fix/**'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Build and run regression checks
+        run: |
+          chmod +x gradlew
+          ./gradlew build --no-daemon --console=plain
+      - name: Upload distributable JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: vmcoin-exchange2-luckperms
+          path: build/libs/vmcoin-exchange-1.0.0.jar
+          if-no-files-found: error
+          retention-days: 30
