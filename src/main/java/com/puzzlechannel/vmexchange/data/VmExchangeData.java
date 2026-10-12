@@ -78,7 +78,15 @@ public final class VmExchangeData extends SavedData {
     }
 
     public void removeExchangeGroup(ResourceKey<Level> dimension, BlockPos pos) {
-        if (exchangeGroups.remove(exchangeKey(dimension, pos)) != null) setDirty();
+        removeExchangeGroupByKey(exchangeKey(dimension, pos));
+    }
+
+    public Map<String, String> exchangeGroups() {
+        return Collections.unmodifiableMap(new HashMap<>(exchangeGroups));
+    }
+
+    public void removeExchangeGroupByKey(String key) {
+        if (exchangeGroups.remove(key) != null) setDirty();
     }
 
     private static String exchangeKey(ResourceKey<Level> dimension, BlockPos pos) {
