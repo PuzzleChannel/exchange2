@@ -27,25 +27,19 @@ public final class VmExchangeMod implements ModInitializer {
         VmExchangeNetworking.initialize();
         VmExchangeCommands.initialize();
 
-        // A player may break an exchange only when they belong to its bound
-        // LuckPerms group. An unbound block is protected from everyone.
+        // Only creative-mode players may break an exchange. Survival/adventure
+        // players cannot break it even if they belong to the assigned group.
         PlayerBlockBreakEvents.BEFORE.register((level, player, pos, state, blockEntity) -> {
             if (!state.is(ModBlocks.EXCHANGE)) return true;
-            if (!(player instanceof ServerPlayer serverPlayer)) return false;
-            if (level.getServer() == null) return false;
-
-            VmExchangeManager manager = VmExchangeManager.get(level.getServer());
-            String group = manager.exchangeGroup(level.dimension(), pos);
-            if (group == null || group.isBlank() || !manager.hasExchangeAccess(serverPlayer, level.dimension(), pos)) {
+            if (player.getAbilities().instabuild) return true;
+            if (player instanceof ServerPlayer serverPlayer) {
                 serverPlayer.sendSystemMessage(Component.literal(
-                        "Нельзя разрушить Обменник: требуется привязка и членство в его группе LuckPerms."));
-                return false;
+                        "Обменник нельзя разрушить в режиме выживания или приключения. Для разрушения нужен творческий режим."));
             }
-            return true;
+            return false;
         });
 
-        // Remove the binding immediately on a normal player break. The manager
-        // also periodically cleans up blocks removed by commands or explosions.
+        // Clear the saved group binding only after a successful creative-mode break.
         PlayerBlockBreakEvents.AFTER.register((level, player, pos, state, blockEntity) -> {
             if (state.is(ModBlocks.EXCHANGE) && level.getServer() != null) {
                 VmExchangeManager.get(level.getServer()).unbindGroup(level.dimension(), pos);
