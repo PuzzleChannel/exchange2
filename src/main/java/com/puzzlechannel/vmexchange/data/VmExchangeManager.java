@@ -3,13 +3,18 @@ package com.puzzlechannel.vmexchange.data;
 import com.puzzlechannel.vmexchange.config.VmExchangeConfig;
 import com.puzzlechannel.vmexchange.menu.VmExchangeMenu;
 import com.puzzlechannel.vmexchange.network.VmExchangeNetworking;
+import com.puzzlechannel.vmexchange.registry.ModBlocks;
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec3;
 
 import java.time.*;
 import java.util.*;
@@ -53,15 +58,9 @@ public final class VmExchangeManager {
             if (migrated.size() == 4) { data.setMaterials(migrated); resetOccurred = true; }
         }
 
-        // If the automatic weekly boundary was crossed while players had the GUI
-        // open, immediately push the fresh materials and 0/limit state to them.
-        if (resetOccurred) {
-            for (ServerPlayer player : ignored.getPlayerList().getPlayers()) {
-                if (player.containerMenu instanceof VmExchangeMenu) {
-                    VmExchangeNetworking.sendSnapshot(player);
-                }
-            }
-        }
+        // Refresh still-open screens after a reset and close any whose exchange is
+        // no longer a valid block or whose owner group access has changed.
+        if (resetOccurred) refreshOpenMenus();
     }
 
     private boolean matchesSlotRoles(List<String> ids, VmExchangeConfig cfg) {
@@ -126,9 +125,7 @@ public final class VmExchangeManager {
         if (raw.size() != 4) return raw.stream().limit(4).toList();
 
         VmExchangeConfig cfg = VmExchangeConfig.get();
-        // Enforce the slot roles for both automatic rolls and operator commands:
-        // slots 1-3 can only use the standard overworld pool, slot 4 only the
-        // special hard-to-automate overworld pool.
+        // Slots 1-3 use the standard pool; slot 4 uses the special pool.
         for (int i = 0; i < 3; i++) {
             if (!cfg.standardMaterialIds.contains(raw.get(i))) return List.of();
         }
@@ -137,8 +134,6 @@ public final class VmExchangeManager {
     }
 
     private List<String> randomMaterials(VmExchangeConfig cfg, int count) {
-        // Slot policy is fixed: first three are normal/processed resources, while
-        // slot four is always drawn from the special hard-to-automate pool.
         List<String> standard = new ArrayList<>(cfg.enabledStandardMaterialIds());
         List<String> special = new ArrayList<>(cfg.enabledSpecialMaterialIds());
         Collections.shuffle(standard, new Random());
@@ -153,8 +148,6 @@ public final class VmExchangeManager {
             }
         }
 
-        // Graceful fallback for heavily customized configs: still return exactly
-        // four valid materials whenever the configured pools contain enough entries.
         if (result.size() < 4) {
             List<String> fallback = new ArrayList<>(cfg.enabledMaterialIds());
             Collections.shuffle(fallback, new Random());
@@ -179,9 +172,43 @@ public final class VmExchangeManager {
     public int currentPrice(ServerPlayer player) { return VmExchangeConfig.get().priceFor(state(player).weeklyEarned()); }
     public List<String> materials() { return data.materials(); }
 
+    /** Returns the group bound to this exact block, dimension included. */
+    public String exchangeGroup(ResourceKey<Level> dimension, BlockPos pos) {
+        if (dimension == null || pos == null) return null;
+        return data.exchangeGroup(dimension, pos);
+    }
+
+    public void bindGroup(ResourceKey<Level> dimension, BlockPos pos, String group) {
+        data.setExchangeGroup(dimension, pos.immutable(), group.toLowerCase(Locale.ROOT));
+    }
+
+    public void unbindGroup(ResourceKey<Level> dimension, BlockPos pos) {
+        data.removeExchangeGroup(dimension, pos);
+    }
+
+    public boolean hasExchangeAccess(ServerPlayer player, ResourceKey<Level> dimension, BlockPos pos) {
+        String requiredGroup = exchangeGroup(dimension, pos);
+        if (requiredGroup == null || requiredGroup.isBlank()) return false;
+        return LuckPermsGroupAccess.playerHasGroup(player, requiredGroup);
+    }
+
+    private boolean isExchangeValid(ServerPlayer player, ResourceKey<Level> dimension, BlockPos pos) {
+        if (dimension == null || pos == null) return false;
+        if (!player.level().dimension().equals(dimension)) return false;
+        if (!player.level().getBlockState(pos).is(ModBlocks.EXCHANGE)) return false;
+        if (player.distanceToSqr(Vec3.atCenterOf(pos)) > 64.0D) return false;
+        return hasExchangeAccess(player, dimension, pos);
+    }
+
     public void refreshOpenMenus() {
-        for (ServerPlayer p : server.getPlayerList().getPlayers()) {
-            if (p.containerMenu instanceof VmExchangeMenu) VmExchangeNetworking.sendSnapshot(p);
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            if (player.containerMenu instanceof VmExchangeMenu menu) {
+                if (!menu.stillValid(player)) {
+                    player.closeContainer();
+                } else {
+                    VmExchangeNetworking.sendSnapshot(player);
+                }
+            }
         }
     }
 
@@ -192,6 +219,12 @@ public final class VmExchangeManager {
 
     public int exchange(ServerPlayer player, VmExchangeMenuAccess menu) {
         ensureCurrentWeek(server);
+        if (!isExchangeValid(player, menu.exchangeDimension(), menu.exchangePos())) {
+            player.sendSystemMessage(Component.literal(
+                    "Доступ к этому Обменнику закрыт: проверьте группу LuckPerms и расстояние до блока."));
+            return 0;
+        }
+
         VmExchangeConfig cfg = VmExchangeConfig.get();
         VmExchangeData.PlayerState ps = state(player);
         if (ps.weeklyEarned() >= cfg.weeklyLimit) return reject(player, "vmexchange.limit_reached");
@@ -203,8 +236,7 @@ public final class VmExchangeManager {
         if (coin == null) return reject(player, "vmexchange.no_vmcoin");
         if (!canFitCoins(player, coin, 1)) return reject(player, "vmexchange.no_space");
 
-        // One button click always buys exactly one coin. All four designated resource
-        // slots must contain the correct item and the full price for the current tier.
+        // Exactly one coin per click; all four designated inputs must meet the current price.
         int price = Math.max(1, cfg.priceFor(ps.weeklyEarned()));
         String[] actual = new String[4];
         int[] counts = new int[4];
@@ -228,7 +260,6 @@ public final class VmExchangeManager {
         int free = 0;
         ItemStack reward = new ItemStack(coin);
         int max = reward.getMaxStackSize();
-        // Armor and offhand are not destinations for placeItemBackInInventory.
         for (int i = 0; i < 36; i++) {
             ItemStack stack = player.getInventory().getItem(i);
             if (stack.isEmpty()) free += max;
@@ -247,5 +278,7 @@ public final class VmExchangeManager {
         int exchangeSlots();
         ItemStack stackInSlot(int slot);
         void removeFromSlot(int slot, int amount);
+        ResourceKey<Level> exchangeDimension();
+        BlockPos exchangePos();
     }
 }
