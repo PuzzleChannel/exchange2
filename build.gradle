@@ -19,6 +19,10 @@ dependencies {
     // and Fabric API are regular Gradle implementation dependencies.
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+    // Compile against the API without bundling LuckPerms into this mod.
+    // The actual LuckPerms mod is required on the server for group-restricted access.
+    compileOnly 'net.luckperms:api:5.5'
 }
 
 processResources {
@@ -44,7 +48,11 @@ publishing {
     repositories { maven { url = layout.buildDirectory.dir('repo') } }
 }
 
-// Small regression runner needs no JUnit or external test framework.
+// The regression suite is a JavaExec runner rather than a JUnit test class.
+tasks.named('test') {
+    failOnNoDiscoveredTests = false
+}
+
 tasks.register('exchangeRegression', JavaExec) {
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath
