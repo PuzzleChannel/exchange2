@@ -33,7 +33,7 @@ public final class VmExchangeClient implements ClientModInitializer {
 
     private static void renderForeignExchangeHint(GuiGraphicsExtractor graphics, DeltaTracker deltaTracker) {
         Minecraft client = Minecraft.getInstance();
-        if (client.player == null || client.level == null || client.screen != null) return;
+        if (client.player == null || client.level == null || client.getScreen() != null) return;
         if (!(client.hitResult instanceof BlockHitResult hit)) return;
 
         var pos = hit.getBlockPos();
