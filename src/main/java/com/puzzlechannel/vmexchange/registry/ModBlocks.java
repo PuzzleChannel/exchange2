@@ -9,19 +9,25 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
-import net.minecraft.world.item.Items;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.material.PushReaction;
 
 public final class ModBlocks {
     public static final Identifier EXCHANGE_ID = Ids.id("exchange");
     public static final ResourceKey<Block> EXCHANGE_KEY = ResourceKey.create(Registries.BLOCK, EXCHANGE_ID);
     public static final ResourceKey<Item> EXCHANGE_ITEM_KEY = ResourceKey.create(Registries.ITEM, EXCHANGE_ID);
     public static final Block EXCHANGE = Registry.register(BuiltInRegistries.BLOCK, EXCHANGE_KEY,
-            new VmExchangeBlock(BlockBehaviour.Properties.ofFullCopy(Blocks.IRON_BLOCK).setId(EXCHANGE_KEY).sound(SoundType.METAL)));
+            new VmExchangeBlock(BlockBehaviour.Properties.ofFullCopy(Blocks.IRON_BLOCK)
+                    .setId(EXCHANGE_KEY)
+                    // Strong blast resistance plus the break-event permission check below.
+                    .strength(6.0F, 1200.0F)
+                    // Pistons and sticky pistons must never move the exchange.
+                    .pushReaction(PushReaction.BLOCK)
+                    .sound(SoundType.METAL)));
     public static final Item EXCHANGE_ITEM = Registry.register(BuiltInRegistries.ITEM, EXCHANGE_ITEM_KEY,
             new BlockItem(EXCHANGE, new Item.Properties().useBlockDescriptionPrefix().setId(EXCHANGE_ITEM_KEY)));
 
