@@ -12,6 +12,7 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.phys.BlockHitResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -48,7 +49,27 @@ public final class VmExchangeMod implements ModInitializer {
 
         ServerLifecycleEvents.SERVER_STARTED.register(server -> VmExchangeManager.get(server).ensureCurrentWeek(server));
         ServerTickEvents.END_SERVER_TICK.register(server -> {
-            if (server.getTickCount() % 20 == 0) VmExchangeManager.get(server).ensureCurrentWeek(server);
+            int tick = server.getTickCount();
+            if (tick % 20 == 0) VmExchangeManager.get(server).ensureCurrentWeek(server);
+
+            // Re-check the block under each player's crosshair 10 times per second.
+            // LuckPerms is evaluated server-side; only the result is sent to the client.
+            if (tick % 2 == 0) {
+                VmExchangeManager manager = VmExchangeManager.get(server);
+                for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+                    BlockPos targetPos = null;
+                    boolean showForeignExchangeHint = false;
+
+                    if (player.pick(8.0D, 0.0F, false) instanceof BlockHitResult target
+                            && player.level().getBlockState(target.getBlockPos()).is(ModBlocks.EXCHANGE)) {
+                        targetPos = target.getBlockPos();
+                        showForeignExchangeHint = !manager.hasExchangeAccess(
+                                player, player.level().dimension(), targetPos);
+                    }
+
+                    VmExchangeNetworking.updateTargetHint(player, targetPos, showForeignExchangeHint);
+                }
+            }
         });
     }
 }
