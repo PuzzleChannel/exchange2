@@ -48,7 +48,11 @@ publishing {
     repositories { maven { url = layout.buildDirectory.dir('repo') } }
 }
 
-// Small regression runner needs no JUnit or external test framework.
+// The regression suite is a JavaExec runner rather than a JUnit test class.
+tasks.named('test') {
+    failOnNoDiscoveredTests = false
+}
+
 tasks.register('exchangeRegression', JavaExec) {
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath
