@@ -1,0 +1,12 @@
+{
+  "parent": "minecraft:block/cube",
+  "textures": {
+    "particle": "vmexchange:block/exchange_side",
+    "down": "vmexchange:block/exchange_bottom",
+    "up": "vmexchange:block/exchange_top",
+    "north": "vmexchange:block/exchange_front",
+    "south": "vmexchange:block/exchange_front",
+    "east": "vmexchange:block/exchange_side",
+    "west": "vmexchange:block/exchange_side"
+  }
+}
