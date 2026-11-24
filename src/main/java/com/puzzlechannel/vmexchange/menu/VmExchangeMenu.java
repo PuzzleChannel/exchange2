@@ -6,7 +6,6 @@ import com.puzzlechannel.vmexchange.registry.ModBlocks;
 import com.puzzlechannel.vmexchange.registry.ModMenus;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -24,18 +23,19 @@ public final class VmExchangeMenu extends AbstractContainerMenu implements VmExc
     private final Inventory playerInventory;
     private final ResourceKey<Level> exchangeDimension;
     private final BlockPos exchangePos;
+    private final String accessGroup;
 
-    // Client-side menu factory has no block metadata; the server always supplies it.
     public VmExchangeMenu(int syncId, Inventory playerInventory) {
-        this(syncId, playerInventory, null, null);
+        this(syncId, playerInventory, null, null, null);
     }
 
     public VmExchangeMenu(int syncId, Inventory playerInventory,
-                          ResourceKey<Level> exchangeDimension, BlockPos exchangePos) {
+                          ResourceKey<Level> exchangeDimension, BlockPos exchangePos, String accessGroup) {
         super(ModMenus.EXCHANGE, syncId);
         this.playerInventory = playerInventory;
         this.exchangeDimension = exchangeDimension;
         this.exchangePos = exchangePos == null ? null : exchangePos.immutable();
+        this.accessGroup = accessGroup;
 
         for (int i = 0; i < EXCHANGE_SLOTS; i++) {
             final int index = i;
@@ -59,10 +59,11 @@ public final class VmExchangeMenu extends AbstractContainerMenu implements VmExc
         String id = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
         MinecraftServer server = playerInventory.player.level().getServer();
         if (server == null) {
-            var s = ClientState.get();
-            return id.equals(s.m1()) || id.equals(s.m2()) || id.equals(s.m3()) || id.equals(s.m4());
+            var snapshot = ClientState.get();
+            return id.equals(snapshot.m1()) || id.equals(snapshot.m2())
+                    || id.equals(snapshot.m3()) || id.equals(snapshot.m4());
         }
-        return VmExchangeManager.get(server).materials().contains(id);
+        return VmExchangeManager.get(server).materialsForGroup(accessGroup).contains(id);
     }
 
     private boolean isAcceptedAt(ItemStack stack, int slotIndex) {
@@ -70,15 +71,15 @@ public final class VmExchangeMenu extends AbstractContainerMenu implements VmExc
         String id = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
         MinecraftServer server = playerInventory.player.level().getServer();
         if (server != null) {
-            var materials = VmExchangeManager.get(server).materials();
+            var materials = VmExchangeManager.get(server).materialsForGroup(accessGroup);
             return slotIndex < materials.size() && materials.get(slotIndex).equals(id);
         }
-        var state = ClientState.get();
+        var snapshot = ClientState.get();
         String expected = switch (slotIndex) {
-            case 0 -> state.m1();
-            case 1 -> state.m2();
-            case 2 -> state.m3();
-            case 3 -> state.m4();
+            case 0 -> snapshot.m1();
+            case 1 -> snapshot.m2();
+            case 2 -> snapshot.m3();
+            case 3 -> snapshot.m4();
             default -> "";
         };
         return id.equals(expected);
@@ -95,7 +96,6 @@ public final class VmExchangeMenu extends AbstractContainerMenu implements VmExc
             ItemStack source = slot.getItem();
             if (!isAccepted(source)) return ItemStack.EMPTY;
             boolean moved = false;
-            // The dedicated deposit wells can hold 64 even where the item's normal stack is smaller.
             for (int i = 0; i < EXCHANGE_SLOTS; i++) {
                 Slot target = slots.get(i);
                 if (!target.mayPlace(source)) continue;
@@ -120,21 +120,18 @@ public final class VmExchangeMenu extends AbstractContainerMenu implements VmExc
 
     @Override public boolean stillValid(Player player) {
         if (!player.isAlive() || player.isRemoved()) return false;
-
-        // The client factory does not receive the block coordinates. Only allow a
-        // location-less menu on the client; every server menu must be block-bound.
-        if (exchangePos == null || exchangeDimension == null) {
+        if (exchangePos == null || exchangeDimension == null || accessGroup == null) {
             return player.level().isClientSide();
         }
         if (!player.level().dimension().equals(exchangeDimension)) return false;
         if (!player.level().getBlockState(exchangePos).is(ModBlocks.EXCHANGE)) return false;
         if (player.distanceToSqr(Vec3.atCenterOf(exchangePos)) > 64.0D) return false;
-
         if (player.level().isClientSide()) return true;
         if (!(player instanceof ServerPlayer serverPlayer)) return false;
         MinecraftServer server = serverPlayer.level().getServer();
-        return server != null
-                && VmExchangeManager.get(server).hasExchangeAccess(serverPlayer, exchangeDimension, exchangePos);
+        if (server == null) return false;
+        String currentGroup = VmExchangeManager.get(server).groupForPlayer(serverPlayer);
+        return currentGroup != null && currentGroup.equalsIgnoreCase(accessGroup);
     }
 
     @Override public void removed(Player player) {
@@ -153,13 +150,12 @@ public final class VmExchangeMenu extends AbstractContainerMenu implements VmExc
         broadcastChanges();
     }
 
-    public boolean canExchange(Player player) {
-        return player instanceof ServerPlayer;
-    }
+    public boolean canExchange(Player player) { return player instanceof ServerPlayer; }
 
     @Override public int exchangeSlots() { return EXCHANGE_SLOTS; }
     @Override public ItemStack stackInSlot(int slot) { return container.getItem(slot); }
     @Override public void removeFromSlot(int slot, int amount) { container.removeItem(slot, amount); }
     @Override public ResourceKey<Level> exchangeDimension() { return exchangeDimension; }
     @Override public BlockPos exchangePos() { return exchangePos; }
+    @Override public String accessGroup() { return accessGroup; }
 }
