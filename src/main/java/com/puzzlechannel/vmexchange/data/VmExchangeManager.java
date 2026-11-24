@@ -154,7 +154,7 @@ public final class VmExchangeManager {
     }
 
     private String materialKey(List<String> ids) {
-        return ids == null ? "" : String.join("|", ids);
+        return ids == null ? "" : String.join("|", ids.stream().sorted().toList());
     }
 
     public VmExchangeData.PlayerState state(ServerPlayer player) {
