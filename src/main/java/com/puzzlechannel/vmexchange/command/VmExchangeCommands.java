@@ -127,7 +127,7 @@ public final class VmExchangeCommands {
                                         + " | Уровень: " + state.tier()
                                         + " | Курс: " + manager.currentPrice(player)), false);
                         return 1;
-                    })))));
+                    })));
 
             root.then(Commands.literal("reload").executes(ctx -> {
                 VmExchangeConfig.load();
