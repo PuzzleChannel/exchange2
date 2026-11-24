@@ -1,1 +1,6 @@
-{"parent":"vmexchange:block/exchange"}
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "vmexchange:item/exchange"
+  }
+}

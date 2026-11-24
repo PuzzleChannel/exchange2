@@ -26,6 +26,19 @@ public final class ExchangeRegression {
             check(!ExchangeRules.hasPayment(24,25,25,ids,wrong,enough), "Any one wrong resource blocks payment");
         }
         check(!ExchangeRules.hasPayment(0,25,1,new String[]{"a"},ids,enough), "Incomplete recipes are rejected");
+        check(ExchangeRules.isSupportedCountryGroup("europe"), "Europe is a supported exchange group");
+        check(ExchangeRules.isSupportedCountryGroup("AFRICA"), "Country group checks are case-insensitive");
+        check(ExchangeRules.isSupportedCountryGroup("avstralia"), "Asia's LuckPerms ID is avstralia");
+        check(!ExchangeRules.isSupportedCountryGroup("default"), "Players without a country group are denied");
+        var countrySets = java.util.Map.of(
+                "europe", java.util.List.of("a", "b", "c", "d"),
+                "africa", java.util.List.of("e", "f", "g", "h"),
+                "avstralia", java.util.List.of("i", "j", "k", "l"));
+        check(ExchangeRules.areCountryMaterialSetsDistinct(countrySets), "Each country has a distinct four-material set");
+        check(!ExchangeRules.areCountryMaterialSetsDistinct(java.util.Map.of(
+                "europe", java.util.List.of("a", "b", "c", "d"),
+                "africa", java.util.List.of("d", "c", "b", "a"),
+                "avstralia", java.util.List.of("i", "j", "k", "l"))), "Countries cannot use the same recipe in different slot order");
         var cfg = new VmExchangeConfig();
         int[] expected = {1,1,1,1,1,5,5,5,5,5,10,10,10,10,10,15,15,15,15,15,20,20,20,20,25};
         for (int earned=0; earned<25; earned++) check(cfg.priceFor(earned)==expected[earned], "Default price of coin "+(earned+1));

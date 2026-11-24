@@ -5,19 +5,18 @@ import com.puzzlechannel.vmexchange.menu.VmExchangeMenu;
 import com.puzzlechannel.vmexchange.network.VmExchangeNetworking;
 import com.puzzlechannel.vmexchange.registry.ModBlocks;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
-import java.time.*;
+import java.time.ZonedDateTime;
 import java.util.*;
 
 public final class VmExchangeManager {
@@ -36,161 +35,126 @@ public final class VmExchangeManager {
 
     public VmExchangeData data() { return data; }
 
+    public static List<String> supportedGroups() { return LuckPermsGroupAccess.SUPPORTED_GROUPS; }
+    public static boolean isSupportedGroup(String group) { return LuckPermsGroupAccess.isSupportedGroup(group); }
+
+    public String groupForPlayer(ServerPlayer player) {
+        return LuckPermsGroupAccess.findSupportedGroup(player);
+    }
+
+    public boolean hasExchangeAccess(ServerPlayer player) {
+        return groupForPlayer(player) != null;
+    }
+
     public void ensureCurrentWeek(MinecraftServer ignored) {
-        cleanupStaleBindings();
-
-        String key = weekKey(ZonedDateTime.now());
-        boolean resetOccurred = false;
-        if (!key.equals(data.weekKey())) {
-            resetWeek(false, null);
-            resetOccurred = true;
+        String currentWeek = weekKey(ZonedDateTime.now());
+        if (!currentWeek.equals(data.weekKey())) {
+            resetWeek();
+            return;
         }
 
         VmExchangeConfig cfg = VmExchangeConfig.get();
-        if (data.materials().size() != 4) {
-            List<String> initial = sanitizeMaterials(cfg.currentMaterials);
-            if (initial.size() == 4) setMaterials(initial, false);
-            else resetWeek(false, null);
-            resetOccurred = true;
-        }
+        Set<String> usedSets = new HashSet<>();
+        boolean changed = false;
+        for (String group : supportedGroups()) {
+            List<String> existing = data.materialsForGroup(group);
+            if (matchesSlotRoles(existing, cfg) && usedSets.add(materialKey(existing))) continue;
 
-        if (!matchesSlotRoles(data.materials(), cfg)) {
-            List<String> migrated = migrateExistingMaterials(data.materials(), cfg);
-            if (migrated.size() == 4) { data.setMaterials(migrated); resetOccurred = true; }
-        }
-
-        // Refresh still-open screens after a reset and close menus whose exchange
-        // is no longer valid or whose group access has changed.
-        if (resetOccurred) refreshOpenMenus();
-    }
-
-    /**
-     * A block-removal hook was removed from Block in the 26.2 mappings.
-     * Purge persisted bindings by checking loaded dimension chunks periodically.
-     * Unloaded chunks are deliberately skipped to avoid loading them just for cleanup.
-     */
-    private void cleanupStaleBindings() {
-        for (String key : data.exchangeGroups().keySet()) {
-            int separator = key.indexOf('@');
-            if (separator <= 0) continue;
-
-            String dimensionId = key.substring(0, separator);
-            String[] coordinates = key.substring(separator + 1).split(",", -1);
-            if (coordinates.length != 3) continue;
-
-            final BlockPos pos;
-            try {
-                pos = new BlockPos(
-                        Integer.parseInt(coordinates[0]),
-                        Integer.parseInt(coordinates[1]),
-                        Integer.parseInt(coordinates[2]));
-            } catch (NumberFormatException ignored) {
-                continue;
+            List<String> next = randomMaterials(cfg, usedSets);
+            if (next.size() != 4) {
+                throw new IllegalStateException("Не удалось подобрать 4 материала для группы LuckPerms " + group);
             }
-
-            for (ServerLevel level : server.getAllLevels()) {
-                if (!level.dimension().identifier().toString().equals(dimensionId)) continue;
-                if (level.hasChunkAt(pos) && !level.getBlockState(pos).is(ModBlocks.EXCHANGE)) {
-                    data.removeExchangeGroupByKey(key);
-                }
-                break;
-            }
+            data.setGroupMaterials(group, next);
+            usedSets.add(materialKey(next));
+            changed = true;
         }
+
+        if (changed) refreshOpenMenus();
     }
 
-    private boolean matchesSlotRoles(List<String> ids, VmExchangeConfig cfg) {
-        if (ids.size() != 4) return false;
-        if (ids.stream().distinct().count() != 4) return false;
-        for (int i = 0; i < 3; i++) if (!cfg.enabledStandardMaterialIds().contains(ids.get(i))) return false;
-        return cfg.enabledSpecialMaterialIds().contains(ids.get(3));
-    }
-
-    private List<String> migrateExistingMaterials(List<String> old, VmExchangeConfig cfg) {
-        List<String> result = new ArrayList<>();
-        for (int i = 0; i < Math.min(3, old.size()); i++) {
-            String id = old.get(i);
-            if (cfg.enabledStandardMaterialIds().contains(id) && !result.contains(id)) result.add(id);
-        }
-        for (String id : cfg.enabledStandardMaterialIds()) {
-            if (result.size() >= 3) break;
-            if (!result.contains(id)) result.add(id);
-        }
-        if (result.size() != 3) return List.of();
-
-        String fourth = old.size() > 3 ? old.get(3) : null;
-        if (fourth == null || !cfg.enabledSpecialMaterialIds().contains(fourth) || result.contains(fourth)) {
-            fourth = cfg.enabledSpecialMaterialIds().stream()
-                    .filter(id -> !result.contains(id))
-                    .findFirst().orElse(null);
-        }
-        if (fourth == null) return List.of();
-        result.add(fourth);
-        return result;
-    }
-
-    public void resetWeek(boolean forceRandom, Collection<String> forcedMaterials) {
+    public void resetWeek() {
         VmExchangeConfig cfg = VmExchangeConfig.get();
-        List<String> next;
-        if (forcedMaterials != null) next = sanitizeMaterials(forcedMaterials);
-        else if (forceRandom || cfg.randomizeMaterials || data.materials().size() != 4) next = randomMaterials(cfg, 4);
-        else next = sanitizeMaterials(cfg.currentMaterials);
-        if (next.size() < 4) next = randomMaterials(cfg, 4);
-        data.setMaterials(next);
+        Set<String> usedSets = new HashSet<>();
+        for (String group : supportedGroups()) {
+            List<String> next = randomMaterials(cfg, usedSets);
+            if (next.size() != 4) {
+                throw new IllegalStateException("Пулы материалов должны содержать минимум 3 обычных и 1 специальный материал.");
+            }
+            data.setGroupMaterials(group, next);
+            usedSets.add(materialKey(next));
+        }
         data.setWeekKey(weekKey(ZonedDateTime.now()));
         data.resetPlayers();
         refreshOpenMenus();
     }
 
-    public void setMaterials(Collection<String> ids, boolean resetProgress) {
+    public void setMaterials(String group, Collection<String> ids, boolean resetProgress) {
+        String normalizedGroup = normalizeSupportedGroup(group);
         List<String> clean = sanitizeMaterials(ids);
-        if (clean.size() != 4) throw new IllegalArgumentException("Exactly 4 valid materials are required");
-        data.setMaterials(clean);
+        if (clean.size() != 4) {
+            throw new IllegalArgumentException("Нужно указать 4 существующих материала: первые три из обычного пула, четвёртый из специального.");
+        }
+        for (String other : supportedGroups()) {
+            if (other.equals(normalizedGroup)) continue;
+            if (materialKey(data.materialsForGroup(other)).equals(materialKey(clean))) {
+                throw new IllegalArgumentException("Этот набор уже используется другой страной. У каждой страны должен быть свой набор.");
+            }
+        }
+        data.setGroupMaterials(normalizedGroup, clean);
         if (resetProgress) data.resetPlayers();
         refreshOpenMenus();
     }
 
+    private String normalizeSupportedGroup(String group) {
+        if (!isSupportedGroup(group)) {
+            throw new IllegalArgumentException("Поддерживаются только группы LuckPerms: europe, africa, avstralia.");
+        }
+        return group.toLowerCase(Locale.ROOT);
+    }
+
+    private boolean matchesSlotRoles(List<String> ids, VmExchangeConfig cfg) {
+        if (ids.size() != 4 || ids.stream().distinct().count() != 4) return false;
+        for (int i = 0; i < 3; i++) {
+            if (!cfg.enabledStandardMaterialIds().contains(ids.get(i))) return false;
+        }
+        return cfg.enabledSpecialMaterialIds().contains(ids.get(3));
+    }
+
     private List<String> sanitizeMaterials(Collection<String> ids) {
         List<String> raw = new ArrayList<>();
-        for (String s : ids) {
-            Identifier id = Identifier.tryParse(s);
+        for (String value : ids) {
+            Identifier id = Identifier.tryParse(value);
             if (id == null) continue;
             Item item = BuiltInRegistries.ITEM.getOptional(id).orElse(null);
             if (item != null && !raw.contains(id.toString())) raw.add(id.toString());
         }
-        if (raw.size() != 4) return raw.stream().limit(4).toList();
+        if (raw.size() != 4) return List.of();
 
         VmExchangeConfig cfg = VmExchangeConfig.get();
-        for (int i = 0; i < 3; i++) {
-            if (!cfg.standardMaterialIds.contains(raw.get(i))) return List.of();
-        }
-        if (!cfg.isSpecialMaterial(raw.get(3))) return List.of();
-        return raw;
+        return matchesSlotRoles(raw, cfg) ? List.copyOf(raw) : List.of();
     }
 
-    private List<String> randomMaterials(VmExchangeConfig cfg, int count) {
+    private List<String> randomMaterials(VmExchangeConfig cfg, Set<String> alreadyUsed) {
         List<String> standard = new ArrayList<>(cfg.enabledStandardMaterialIds());
         List<String> special = new ArrayList<>(cfg.enabledSpecialMaterialIds());
-        Collections.shuffle(standard, new Random());
-        Collections.shuffle(special, new Random());
+        if (standard.size() < 3 || special.isEmpty()) return List.of();
 
-        List<String> result = new ArrayList<>(4);
-        result.addAll(standard.stream().limit(Math.min(3, count - 1)).toList());
-        for (String id : special) {
-            if (!result.contains(id)) {
-                result.add(id);
-                break;
-            }
+        List<String> lastCandidate = List.of();
+        for (int attempt = 0; attempt < 128; attempt++) {
+            Collections.shuffle(standard);
+            Collections.shuffle(special);
+            List<String> candidate = new ArrayList<>(standard.subList(0, 3));
+            String fourth = special.stream().filter(id -> !candidate.contains(id)).findFirst().orElse(null);
+            if (fourth == null) continue;
+            candidate.add(fourth);
+            lastCandidate = List.copyOf(candidate);
+            if (!alreadyUsed.contains(materialKey(candidate))) return lastCandidate;
         }
+        return lastCandidate;
+    }
 
-        if (result.size() < 4) {
-            List<String> fallback = new ArrayList<>(cfg.enabledMaterialIds());
-            Collections.shuffle(fallback, new Random());
-            for (String id : fallback) {
-                if (!result.contains(id)) result.add(id);
-                if (result.size() == 4) break;
-            }
-        }
-        return result.stream().limit(4).toList();
+    private String materialKey(List<String> ids) {
+        return ids == null ? "" : String.join("|", ids.stream().sorted().toList());
     }
 
     public VmExchangeData.PlayerState state(ServerPlayer player) {
@@ -203,44 +167,34 @@ public final class VmExchangeManager {
         return state;
     }
 
-    public int currentPrice(ServerPlayer player) { return VmExchangeConfig.get().priceFor(state(player).weeklyEarned()); }
-    public List<String> materials() { return data.materials(); }
-
-    public String exchangeGroup(ResourceKey<Level> dimension, BlockPos pos) {
-        if (dimension == null || pos == null) return null;
-        return data.exchangeGroup(dimension, pos);
+    public int currentPrice(ServerPlayer player) {
+        return VmExchangeConfig.get().priceFor(state(player).weeklyEarned());
     }
 
-    public void bindGroup(ResourceKey<Level> dimension, BlockPos pos, String group) {
-        data.setExchangeGroup(dimension, pos.immutable(), group.toLowerCase(Locale.ROOT));
+    public List<String> materials(ServerPlayer player) {
+        return materialsForGroup(groupForPlayer(player));
     }
 
-    public void unbindGroup(ResourceKey<Level> dimension, BlockPos pos) {
-        data.removeExchangeGroup(dimension, pos);
+    public List<String> materialsForGroup(String group) {
+        if (!isSupportedGroup(group)) return List.of();
+        return data.materialsForGroup(group);
     }
 
-    public boolean hasExchangeAccess(ServerPlayer player, ResourceKey<Level> dimension, BlockPos pos) {
-        String requiredGroup = exchangeGroup(dimension, pos);
-        if (requiredGroup == null || requiredGroup.isBlank()) return false;
-        return LuckPermsGroupAccess.playerHasGroup(player, requiredGroup);
-    }
-
-    private boolean isExchangeValid(ServerPlayer player, ResourceKey<Level> dimension, BlockPos pos) {
-        if (dimension == null || pos == null) return false;
+    private boolean isExchangeValid(ServerPlayer player, ResourceKey<Level> dimension,
+                                    BlockPos pos, String openedForGroup) {
+        if (dimension == null || pos == null || !isSupportedGroup(openedForGroup)) return false;
         if (!player.level().dimension().equals(dimension)) return false;
         if (!player.level().getBlockState(pos).is(ModBlocks.EXCHANGE)) return false;
         if (player.distanceToSqr(Vec3.atCenterOf(pos)) > 64.0D) return false;
-        return hasExchangeAccess(player, dimension, pos);
+        String currentGroup = groupForPlayer(player);
+        return currentGroup != null && currentGroup.equalsIgnoreCase(openedForGroup);
     }
 
     public void refreshOpenMenus() {
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             if (player.containerMenu instanceof VmExchangeMenu menu) {
-                if (!menu.stillValid(player)) {
-                    player.closeContainer();
-                } else {
-                    VmExchangeNetworking.sendSnapshot(player);
-                }
+                if (!menu.stillValid(player)) player.closeContainer();
+                else VmExchangeNetworking.sendSnapshot(player);
             }
         }
     }
@@ -252,20 +206,20 @@ public final class VmExchangeManager {
 
     public int exchange(ServerPlayer player, VmExchangeMenuAccess menu) {
         ensureCurrentWeek(server);
-        if (!isExchangeValid(player, menu.exchangeDimension(), menu.exchangePos())) {
-            player.sendSystemMessage(Component.literal(
-                    "Доступ к этому Обменнику закрыт: проверьте группу LuckPerms и расстояние до блока."));
+        if (!isExchangeValid(player, menu.exchangeDimension(), menu.exchangePos(), menu.accessGroup())) {
+            player.sendSystemMessage(Component.literal("Вы не можете использовать это."));
             return 0;
         }
 
+        String group = groupForPlayer(player);
+        List<String> requiredMaterials = materialsForGroup(group);
         VmExchangeConfig cfg = VmExchangeConfig.get();
         VmExchangeData.PlayerState ps = state(player);
         if (ps.weeklyEarned() >= cfg.weeklyLimit) return reject(player, "vmexchange.limit_reached");
-        if (menu.exchangeSlots() != 4 || data.materials().size() != 4) return 0;
+        if (menu.exchangeSlots() != 4 || requiredMaterials.size() != 4) return 0;
 
         Identifier coinId = Identifier.tryParse("vmtrade:vmcoin");
-        if (coinId == null || !BuiltInRegistries.ITEM.containsKey(coinId)) return reject(player, "vmexchange.no_vmcoin");
-        Item coin = BuiltInRegistries.ITEM.getOptional(coinId).orElse(null);
+        Item coin = coinId == null ? null : BuiltInRegistries.ITEM.getOptional(coinId).orElse(null);
         if (coin == null) return reject(player, "vmexchange.no_vmcoin");
         if (!canFitCoins(player, coin, 1)) return reject(player, "vmexchange.no_space");
 
@@ -278,7 +232,7 @@ public final class VmExchangeManager {
             counts[i] = stack.getCount();
         }
         if (!ExchangeRules.hasPayment(ps.weeklyEarned(), cfg.weeklyLimit, price,
-                data.materials().toArray(String[]::new), actual, counts)) {
+                requiredMaterials.toArray(String[]::new), actual, counts)) {
             return reject(player, "vmexchange.missing_resources");
         }
 
@@ -295,7 +249,9 @@ public final class VmExchangeManager {
         for (int i = 0; i < 36; i++) {
             ItemStack stack = player.getInventory().getItem(i);
             if (stack.isEmpty()) free += max;
-            else if (ItemStack.isSameItemSameComponents(stack, reward)) free += Math.max(0, stack.getMaxStackSize() - stack.getCount());
+            else if (ItemStack.isSameItemSameComponents(stack, reward)) {
+                free += Math.max(0, stack.getMaxStackSize() - stack.getCount());
+            }
             if (free >= count) return true;
         }
         return false;
@@ -312,5 +268,6 @@ public final class VmExchangeManager {
         void removeFromSlot(int slot, int amount);
         ResourceKey<Level> exchangeDimension();
         BlockPos exchangePos();
+        String accessGroup();
     }
 }

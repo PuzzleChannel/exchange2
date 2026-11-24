@@ -3,19 +3,14 @@ package com.puzzlechannel.vmexchange.command;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.puzzlechannel.vmexchange.config.VmExchangeConfig;
-import com.puzzlechannel.vmexchange.data.LuckPermsGroupAccess;
 import com.puzzlechannel.vmexchange.data.VmExchangeManager;
 import com.puzzlechannel.vmexchange.network.VmExchangeNetworking;
-import com.puzzlechannel.vmexchange.registry.ModBlocks;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
-import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.HitResult;
 
 import java.time.*;
 import java.time.temporal.TemporalAdjusters;
@@ -29,42 +24,35 @@ public final class VmExchangeCommands {
             root.then(Commands.literal("info")
                     .executes(ctx -> info(ctx.getSource().getPlayerOrException())));
 
-            root.then(Commands.literal("bindgroup")
-                    .then(Commands.argument("group", StringArgumentType.word())
-                            .executes(ctx -> bindGroup(
-                                    ctx.getSource().getPlayerOrException(),
-                                    StringArgumentType.getString(ctx, "group")))));
-
-            root.then(Commands.literal("unbindgroup")
-                    .executes(ctx -> unbindGroup(ctx.getSource().getPlayerOrException())));
-
-            root.then(Commands.literal("groupinfo")
-                    .executes(ctx -> groupInfo(ctx.getSource().getPlayerOrException())));
-
             root.then(Commands.literal("setmaterial")
-                    .then(Commands.argument("slot", IntegerArgumentType.integer(1, 4))
-                            .then(Commands.argument("item", StringArgumentType.word())
-                                    .executes(ctx -> setMaterial(
-                                            ctx.getSource().getPlayerOrException(),
-                                            IntegerArgumentType.getInteger(ctx, "slot"),
-                                            StringArgumentType.getString(ctx, "item"))))));
+                    .then(Commands.argument("group", StringArgumentType.word())
+                            .then(Commands.argument("slot", IntegerArgumentType.integer(1, 4))
+                                    .then(Commands.argument("item", StringArgumentType.word())
+                                            .executes(ctx -> setMaterial(
+                                                    ctx.getSource().getPlayerOrException(),
+                                                    StringArgumentType.getString(ctx, "group"),
+                                                    IntegerArgumentType.getInteger(ctx, "slot"),
+                                                    StringArgumentType.getString(ctx, "item")))))));
 
             root.then(Commands.literal("setmaterials")
-                    .then(Commands.argument("item1", StringArgumentType.word())
-                            .then(Commands.argument("item2", StringArgumentType.word())
-                                    .then(Commands.argument("item3", StringArgumentType.word())
-                                            .then(Commands.argument("item4", StringArgumentType.word())
-                                                    .executes(ctx -> setMaterials(
-                                                            ctx.getSource().getPlayerOrException(),
-                                                            List.of(
-                                                                    StringArgumentType.getString(ctx, "item1"),
-                                                                    StringArgumentType.getString(ctx, "item2"),
-                                                                    StringArgumentType.getString(ctx, "item3"),
-                                                                    StringArgumentType.getString(ctx, "item4")))))))));
+                    .then(Commands.argument("group", StringArgumentType.word())
+                            .then(Commands.argument("item1", StringArgumentType.word())
+                                    .then(Commands.argument("item2", StringArgumentType.word())
+                                            .then(Commands.argument("item3", StringArgumentType.word())
+                                                    .then(Commands.argument("item4", StringArgumentType.word())
+                                                            .executes(ctx -> setMaterials(
+                                                                    ctx.getSource().getPlayerOrException(),
+                                                                    StringArgumentType.getString(ctx, "group"),
+                                                                    List.of(
+                                                                            StringArgumentType.getString(ctx, "item1"),
+                                                                            StringArgumentType.getString(ctx, "item2"),
+                                                                            StringArgumentType.getString(ctx, "item3"),
+                                                                            StringArgumentType.getString(ctx, "item4"))))))))));
 
             root.then(Commands.literal("randomize").executes(ctx -> {
-                VmExchangeManager.get(ctx.getSource().getServer()).resetWeek(true, null);
-                ctx.getSource().sendSuccess(() -> Component.literal("Новые 4 материала выбраны, недельный прогресс сброшен."), true);
+                VmExchangeManager.get(ctx.getSource().getServer()).resetWeek();
+                ctx.getSource().sendSuccess(() -> Component.literal(
+                        "Для Европы, Африки и Азии выбраны новые наборы материалов. Недельный прогресс сброшен."), true);
                 return 1;
             }));
 
@@ -73,7 +61,8 @@ public final class VmExchangeCommands {
                         VmExchangeConfig.get().weeklyLimit = IntegerArgumentType.getInteger(ctx, "amount");
                         VmExchangeConfig.save();
                         VmExchangeManager.get(ctx.getSource().getServer()).refreshOpenMenus();
-                        ctx.getSource().sendSuccess(() -> Component.literal("Недельный лимит: " + VmExchangeConfig.get().weeklyLimit), true);
+                        ctx.getSource().sendSuccess(() -> Component.literal(
+                                "Недельный лимит: " + VmExchangeConfig.get().weeklyLimit), true);
                         return 1;
                     })));
 
@@ -108,8 +97,9 @@ public final class VmExchangeCommands {
                             }))));
 
             root.then(Commands.literal("resetweek").executes(ctx -> {
-                VmExchangeManager.get(ctx.getSource().getServer()).resetWeek(true, null);
-                ctx.getSource().sendSuccess(() -> Component.literal("Новая неделя принудительно начата."), true);
+                VmExchangeManager.get(ctx.getSource().getServer()).resetWeek();
+                ctx.getSource().sendSuccess(() -> Component.literal(
+                        "Неделя обмена перезапущена: материалы всех стран обновлены, недельный прогресс сброшен."), true);
                 return 1;
             }));
 
@@ -117,7 +107,8 @@ public final class VmExchangeCommands {
                     .then(Commands.argument("player", EntityArgument.player()).executes(ctx -> {
                         ServerPlayer player = EntityArgument.getPlayer(ctx, "player");
                         VmExchangeManager.get(ctx.getSource().getServer()).data().setPlayer(player.getUUID(), 0, 0);
-                        ctx.getSource().sendSuccess(() -> Component.literal("Прогресс игрока сброшен: " + player.getGameProfile().name()), true);
+                        ctx.getSource().sendSuccess(() -> Component.literal(
+                                "Прогресс игрока сброшен: " + player.getGameProfile().name()), true);
                         VmExchangeNetworking.sendSnapshot(player);
                         return 1;
                     })));
@@ -128,8 +119,10 @@ public final class VmExchangeCommands {
                         var manager = VmExchangeManager.get(ctx.getSource().getServer());
                         var state = manager.state(player);
                         var config = VmExchangeConfig.get();
+                        String group = manager.groupForPlayer(player);
                         ctx.getSource().sendSuccess(() -> Component.literal(
                                 "Игрок: " + player.getGameProfile().name()
+                                        + " | Страна: " + (group == null ? "нет доступа" : group)
                                         + " | Получено: " + state.weeklyEarned() + " / " + config.weeklyLimit
                                         + " | Уровень: " + state.tier()
                                         + " | Курс: " + manager.currentPrice(player)), false);
@@ -141,7 +134,8 @@ public final class VmExchangeCommands {
                 var manager = VmExchangeManager.get(ctx.getSource().getServer());
                 manager.ensureCurrentWeek(ctx.getSource().getServer());
                 manager.refreshOpenMenus();
-                ctx.getSource().sendSuccess(() -> Component.literal("Конфигурация ВМуткоин Обменника перезагружена."), true);
+                ctx.getSource().sendSuccess(() -> Component.literal(
+                        "Конфигурация ВМуткоин Обменника перезагружена."), true);
                 return 1;
             }));
 
@@ -149,89 +143,60 @@ public final class VmExchangeCommands {
         });
     }
 
-    private static int bindGroup(ServerPlayer player, String requestedGroup) {
-        String group = requestedGroup.trim().toLowerCase(Locale.ROOT);
-        BlockPos pos = lookedAtExchange(player);
-        if (pos == null) {
-            player.sendSystemMessage(Component.literal(
-                    "Не вижу Обменник в радиусе 8 блоков. Наведите прицел на блок и повторите команду."));
-            return 0;
-        }
-        if (!LuckPermsGroupAccess.isAvailable()) {
-            player.sendSystemMessage(Component.literal(
-                    "LuckPerms API недоступен. Установите LuckPerms 5.5 или новее на сервер."));
-            return 0;
-        }
-        if (!LuckPermsGroupAccess.groupExists(group)) {
-            player.sendSystemMessage(Component.literal(
-                    "Группа LuckPerms '" + group + "' не найдена. Проверьте имя группы."));
-            return 0;
-        }
-
-        VmExchangeManager.get(player.level().getServer())
-                .bindGroup(player.level().dimension(), pos, group);
-        player.sendSystemMessage(Component.literal(
-                "Обменник на " + pos.getX() + " " + pos.getY() + " " + pos.getZ()
-                        + " привязан к группе LuckPerms: " + group));
-        return 1;
-    }
-
-    private static int unbindGroup(ServerPlayer player) {
-        BlockPos pos = lookedAtExchange(player);
-        if (pos == null) {
-            player.sendSystemMessage(Component.literal(
-                    "Не вижу Обменник в радиусе 8 блоков. Наведите прицел на блок и повторите команду."));
-            return 0;
-        }
-        VmExchangeManager.get(player.level().getServer()).unbindGroup(player.level().dimension(), pos);
-        player.sendSystemMessage(Component.literal(
-                "Привязка группы удалена. Обменник закрыт для всех, пока вы не назначите новую группу."));
-        return 1;
-    }
-
-    private static int groupInfo(ServerPlayer player) {
-        BlockPos pos = lookedAtExchange(player);
-        if (pos == null) {
-            player.sendSystemMessage(Component.literal(
-                    "Не вижу Обменник в радиусе 8 блоков. Наведите прицел на блок и повторите команду."));
-            return 0;
-        }
-        String group = VmExchangeManager.get(player.level().getServer())
-                .exchangeGroup(player.level().dimension(), pos);
-        player.sendSystemMessage(Component.literal(
-                group == null || group.isBlank()
-                        ? "Этот Обменник не привязан к группе и закрыт для всех."
-                        : "Группа доступа этого Обменника: " + group));
-        return 1;
-    }
-
-    private static BlockPos lookedAtExchange(ServerPlayer player) {
-        var hit = player.pick(8.0D, 0.0F, false);
-        if (!(hit instanceof BlockHitResult blockHit) || hit.getType() != HitResult.Type.BLOCK) return null;
-        BlockPos pos = blockHit.getBlockPos();
-        return player.level().getBlockState(pos).is(ModBlocks.EXCHANGE) ? pos : null;
-    }
-
     private static int info(ServerPlayer player) {
-        var m = VmExchangeManager.get(player.level().getServer()); var cfg = VmExchangeConfig.get();
-        player.sendSystemMessage(Component.literal("Текущая неделя: " + m.data().weekKey()));
+        var manager = VmExchangeManager.get(player.level().getServer());
+        var cfg = VmExchangeConfig.get();
+        manager.ensureCurrentWeek(player.level().getServer());
+        player.sendSystemMessage(Component.literal("Текущая неделя: " + manager.data().weekKey()));
         player.sendSystemMessage(Component.literal("До сброса: " + untilReset(cfg)));
-        for (int i = 0; i < 4; i++) player.sendSystemMessage(Component.literal("Материал " + (i + 1) + ": " + (i < m.materials().size() ? m.materials().get(i) : "-")));
+        for (String group : VmExchangeManager.supportedGroups()) {
+            player.sendSystemMessage(Component.literal(
+                    group + ": " + String.join(", ", manager.materialsForGroup(group))));
+        }
         player.sendSystemMessage(Component.literal("Недельный лимит: " + cfg.weeklyLimit));
         return 1;
     }
 
-    private static int setMaterial(ServerPlayer player, int slot, String id) {
-        if (Identifier.tryParse(id) == null) { player.sendSystemMessage(Component.literal("Некорректный ID предмета.")); return 0; }
-        var m = VmExchangeManager.get(player.level().getServer()); List<String> list = new ArrayList<>(m.materials()); while (list.size() < 4) list.add("");
+    private static int setMaterial(ServerPlayer player, String group, int slot, String id) {
+        if (!VmExchangeManager.isSupportedGroup(group)) {
+            player.sendSystemMessage(Component.literal("Допустимые группы: europe, africa, avstralia."));
+            return 0;
+        }
+        if (Identifier.tryParse(id) == null) {
+            player.sendSystemMessage(Component.literal("Некорректный ID предмета."));
+            return 0;
+        }
+        var manager = VmExchangeManager.get(player.level().getServer());
+        List<String> list = new ArrayList<>(manager.materialsForGroup(group));
+        if (list.size() != 4) {
+            player.sendSystemMessage(Component.literal(
+                    "Сначала дождитесь генерации наборов материалов или используйте /vmexchange randomize."));
+            return 0;
+        }
         list.set(slot - 1, id);
-        try { m.setMaterials(list, false); } catch (Exception e) { player.sendSystemMessage(Component.literal("Предмет не найден или набор невалиден.")); return 0; }
-        player.sendSystemMessage(Component.literal("Материал " + slot + " установлен: " + id)); return 1;
+        try {
+            manager.setMaterials(group, list, false);
+        } catch (Exception exception) {
+            player.sendSystemMessage(Component.literal(exception.getMessage() == null
+                    ? "Набор материалов невалиден." : exception.getMessage()));
+            return 0;
+        }
+        player.sendSystemMessage(Component.literal(
+                "Материал " + slot + " для группы " + group + " установлен: " + id));
+        return 1;
     }
 
-    private static int setMaterials(ServerPlayer player, List<String> ids) {
-        try { VmExchangeManager.get(player.level().getServer()).setMaterials(ids, false); player.sendSystemMessage(Component.literal("Текущие 4 материала установлены.")); return 1; }
-        catch (Exception e) { player.sendSystemMessage(Component.literal("Нужно указать 4 существующих ID предметов без повторов.")); return 0; }
+    private static int setMaterials(ServerPlayer player, String group, List<String> ids) {
+        try {
+            VmExchangeManager.get(player.level().getServer()).setMaterials(group, ids, false);
+            player.sendSystemMessage(Component.literal("Набор материалов для группы " + group + " обновлён."));
+            return 1;
+        } catch (Exception exception) {
+            player.sendSystemMessage(Component.literal(exception.getMessage() == null
+                    ? "Нужно указать 4 существующих ID без повторов: первые три — обычные ресурсы, четвёртый — специальный."
+                    : exception.getMessage()));
+            return 0;
+        }
     }
 
     private static void ensureTier(VmExchangeConfig cfg, int i) {
