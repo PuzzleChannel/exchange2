@@ -3,12 +3,13 @@ package com.puzzlechannel.vmexchange.registry;
 import com.puzzlechannel.vmexchange.data.VmExchangeManager;
 import com.puzzlechannel.vmexchange.menu.VmExchangeMenu;
 import com.puzzlechannel.vmexchange.network.VmExchangeNetworking;
+import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionResult;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.SimpleMenuProvider;
-import net.minecraft.network.chat.Component;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
@@ -23,22 +24,20 @@ public final class VmExchangeBlock extends Block {
         if (!(player instanceof ServerPlayer serverPlayer)) return InteractionResult.SUCCESS;
 
         VmExchangeManager manager = VmExchangeManager.get(serverPlayer.level().getServer());
-        String requiredGroup = manager.exchangeGroup(level.dimension(), pos);
-        if (requiredGroup == null || requiredGroup.isBlank()) {
-            serverPlayer.sendSystemMessage(Component.literal(
-                    "Этот Обменник ещё не настроен. Администратор должен навести прицел на блок и выполнить /vmexchange bindgroup <группа>."));
-            return InteractionResult.SUCCESS;
-        }
-
-        if (!manager.hasExchangeAccess(serverPlayer, level.dimension(), pos)) {
-            serverPlayer.sendSystemMessage(Component.literal(
-                    "Доступ запрещён. Этот Обменник предназначен для группы LuckPerms: " + requiredGroup));
+        String group = manager.groupForPlayer(serverPlayer);
+        if (group == null) {
+            serverPlayer.sendSystemMessage(Component.literal("Вы не можете использовать это.").withStyle(ChatFormatting.RED));
             return InteractionResult.SUCCESS;
         }
 
         manager.ensureCurrentWeek(serverPlayer.level().getServer());
+        if (manager.materialsForGroup(group).size() != 4) {
+            serverPlayer.sendSystemMessage(Component.literal("Для вашей страны пока не настроен набор материалов."));
+            return InteractionResult.SUCCESS;
+        }
+
         serverPlayer.openMenu(new SimpleMenuProvider(
-                (syncId, inventory, p) -> new VmExchangeMenu(syncId, inventory, level.dimension(), pos),
+                (syncId, inventory, p) -> new VmExchangeMenu(syncId, inventory, level.dimension(), pos, group),
                 Component.translatable("container.vmexchange.exchange")));
         VmExchangeNetworking.sendSnapshot(serverPlayer);
         return InteractionResult.SUCCESS;
